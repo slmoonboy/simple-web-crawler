@@ -1,3 +1,49 @@
+import sys
+import subprocess
+import importlib.util
+
+# --- Dependency Checking ---
+def check_dependencies():
+    """
+    Checks if all required packages are installed and prompts the user to install them if not.
+    """
+    required_packages = {
+        "requests": "requests",
+        "bs4": "beautifulsoup4",
+        "tqdm": "tqdm"
+    }
+    missing_packages = []
+
+    for package_name, import_name in required_packages.items():
+        if importlib.util.find_spec(import_name) is None:
+            missing_packages.append(package_name)
+
+    if missing_packages:
+        print("Some required packages are not installed.")
+        for pkg in missing_packages:
+            print(f" - {pkg}")
+        
+        # Automatically ask to install
+        try:
+            response = input("Do you want to try and install them now? (y/n): ").lower()
+            if response == 'y':
+                for pkg in missing_packages:
+                    print(f"Installing {pkg}...")
+                    # Using the same Python executable that is running the script
+                    subprocess.check_call([sys.executable, "-m", "pip", "install", pkg])
+                print("\nDependencies installed. Please run the script again.")
+            else:
+                print("Please install the missing dependencies manually to run the script.")
+        except Exception as e:
+            print(f"An error occurred during installation: {e}")
+            print("Please try installing the dependencies manually.")
+        
+        sys.exit(1) # Exit after attempting to install
+
+# Run the check before importing the modules
+check_dependencies()
+
+
 import requests
 from bs4 import BeautifulSoup
 import os
@@ -41,11 +87,17 @@ def download_image(url, output_folder, headers):
         file_path = os.path.join(output_folder, sanitized_name)
 
         if os.path.exists(file_path):
-            return True # Consider it a "success" if the file is already there
+            return True
 
         img_data = requests.get(url, headers=headers, timeout=20, stream=True)
         img_data.raise_for_status()
         
+        # --- Failsafe: Check Content-Type ---
+        content_type = img_data.headers.get('content-type')
+        if not content_type or not content_type.lower().startswith('image'):
+            # print(f"Skipping non-image content at {url}")
+            return False
+
         total_size = int(img_data.headers.get('content-length', 0))
         
         with open(file_path, 'wb') as f, tqdm(
@@ -60,11 +112,9 @@ def download_image(url, output_folder, headers):
                 size = f.write(chunk)
                 bar.update(size)
         return True
-    except requests.exceptions.RequestException as e:
-        # print(f"Error downloading {url}: {e}") # Suppress for cleaner output
+    except requests.exceptions.RequestException:
         return False
-    except IOError as e:
-        # print(f"Error saving file {file_path}: {e}")
+    except IOError:
         return False
 
 def crawl_site(base_url, max_depth, headers):
@@ -93,11 +143,10 @@ def crawl_site(base_url, max_depth, headers):
             response = requests.get(current_url, headers=headers, timeout=10)
             response.raise_for_status()
         except requests.exceptions.RequestException:
-            continue # Skip pages that can't be fetched
+            continue
 
         soup = BeautifulSoup(response.text, 'html.parser')
 
-        # Find images on the current page
         for img in soup.find_all('img'):
             img_url = img.get('data-src') or img.get('data-lazyload') or img.get('src')
             if not img_url or img_url.startswith('data:'):
@@ -106,7 +155,6 @@ def crawl_site(base_url, max_depth, headers):
             absolute_img_url = urljoin(current_url, img_url)
             all_image_urls.add(absolute_img_url)
 
-        # Find links to other pages
         if depth < max_depth:
             for link in soup.find_all('a', href=True):
                 absolute_link_url = urljoin(current_url, link['href'])
@@ -116,7 +164,7 @@ def crawl_site(base_url, max_depth, headers):
                         to_visit.append((absolute_link_url, depth + 1))
         
         progress_bar.update(1)
-        time.sleep(0.5) # Be polite to the server
+        time.sleep(0.5)
 
     progress_bar.close()
     print(f"\nCrawl finished. Found {len(visited)} pages and {len(all_image_urls)} unique image URLs.")
@@ -126,8 +174,8 @@ def main():
     """
     Main function to parse arguments and run the scraper.
     """
-    parser = argparse.ArgumentParser(description="A web crawler to scrape images from a website.")
-    parser.add_argument("url", help="The base URL of the website to scrape.")
+    parser = argparse.ArgumentParser(description="A simple web crawler to scrape images from a website.")
+    parser.add_argument("url", nargs='?', default="https://www.tourslanka.com/", help="The base URL of the website to scrape. Defaults to 'https://www.tourslanka.com/'.")
     parser.add_argument("-o", "--output", default="scrapes", help="The directory to save the scraped images. Defaults to 'scrapes'.")
     parser.add_argument("-d", "--depth", type=int, default=2, help="The maximum depth to crawl. Defaults to 2.")
     args = parser.parse_args()
@@ -151,7 +199,6 @@ def main():
     print("\nStarting image downloads...")
     
     download_count = 0
-    # The list conversion is needed to show progress with tqdm on a set
     for img_url in tqdm(list(all_image_urls), desc="Downloading Images", unit="file"):
         if download_image(img_url, output_directory, headers):
             download_count += 1
