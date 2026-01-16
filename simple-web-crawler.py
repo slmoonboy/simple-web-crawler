@@ -23,22 +23,24 @@ def check_dependencies():
         for pkg in missing_packages:
             print(f" - {pkg}")
         
-        # Automatically ask to install
         try:
             response = input("Do you want to try and install them now? (y/n): ").lower()
             if response == 'y':
                 for pkg in missing_packages:
                     print(f"Installing {pkg}...")
-                    # Using the same Python executable that is running the script
                     subprocess.check_call([sys.executable, "-m", "pip", "install", pkg])
-                print("\nDependencies installed. Please run the script again.")
+                print("\nDependencies installed successfully.")
+                # After installing, we should not exit, but let the script continue.
+                # However, for the first run, it's better to ask the user to restart.
+                print("Please restart the script to use the newly installed dependencies.")
+                sys.exit(0) # Exit to force a restart
             else:
                 print("Please install the missing dependencies manually to run the script.")
         except Exception as e:
             print(f"An error occurred during installation: {e}")
             print("Please try installing the dependencies manually.")
         
-        sys.exit(1) # Exit after attempting to install
+        sys.exit(1)
 
 # Run the check before importing the modules
 check_dependencies()
@@ -92,10 +94,8 @@ def download_image(url, output_folder, headers):
         img_data = requests.get(url, headers=headers, timeout=20, stream=True)
         img_data.raise_for_status()
         
-        # --- Failsafe: Check Content-Type ---
         content_type = img_data.headers.get('content-type')
         if not content_type or not content_type.lower().startswith('image'):
-            # print(f"Skipping non-image content at {url}")
             return False
 
         total_size = int(img_data.headers.get('content-length', 0))
@@ -128,7 +128,7 @@ def crawl_site(base_url, max_depth, headers):
 
     print("Starting crawl to map the site...")
     
-    progress_bar = tqdm(desc="Crawling Pages", unit="page")
+    progress_bar = tqdm(desc="Crawling Pages", unit="page", position=0, leave=True) # Added position for better display with nested tqdm
 
     while to_visit:
         current_url, depth = to_visit.pop(0)
@@ -175,12 +175,19 @@ def main():
     Main function to parse arguments and run the scraper.
     """
     parser = argparse.ArgumentParser(description="A simple web crawler to scrape images from a website.")
-    parser.add_argument("url", nargs='?', default="https://www.tourslanka.com/", help="The base URL of the website to scrape. Defaults to 'https://www.tourslanka.com/'.")
+    parser.add_argument("url", nargs='?', help="The base URL of the website to scrape.")
     parser.add_argument("-o", "--output", default="scrapes", help="The directory to save the scraped images. Defaults to 'scrapes'.")
     parser.add_argument("-d", "--depth", type=int, default=2, help="The maximum depth to crawl. Defaults to 2.")
     args = parser.parse_args()
 
     base_url = args.url
+    if not base_url:
+        base_url = input("Please enter the website URL you want to crawl and scrape: ")
+        if not base_url.startswith("http://") and not base_url.startswith("https://"):
+            base_url = "https://" + base_url # Prepend https:// if not present
+        print(f"Using URL: {base_url}")
+
+
     output_directory = args.output
     max_depth = args.depth
 
@@ -199,7 +206,7 @@ def main():
     print("\nStarting image downloads...")
     
     download_count = 0
-    for img_url in tqdm(list(all_image_urls), desc="Downloading Images", unit="file"):
+    for img_url in tqdm(list(all_image_urls), desc="Downloading Images", unit="file", position=0, leave=True):
         if download_image(img_url, output_directory, headers):
             download_count += 1
     
