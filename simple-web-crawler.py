@@ -9,14 +9,16 @@ def check_dependencies():
     """
     required_packages = {
         "requests": "requests",
-        "bs4": "beautifulsoup4",
+        "beautifulsoup4": "bs4",  # Check for 'bs4' module but install 'beautifulsoup4' package
         "tqdm": "tqdm"
     }
     missing_packages = []
 
-    for package_name, import_name in required_packages.items():
-        if importlib.util.find_spec(import_name) is None:
-            missing_packages.append(package_name)
+    for install_name, import_name in required_packages.items():
+        try:
+            importlib.import_module(import_name)
+        except ImportError:
+            missing_packages.append(install_name)
 
     if missing_packages:
         print("Some required packages are not installed.")
