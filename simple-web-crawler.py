@@ -30,17 +30,15 @@ def check_dependencies():
                     print(f"Installing {pkg}...")
                     subprocess.check_call([sys.executable, "-m", "pip", "install", pkg])
                 print("\nDependencies installed successfully.")
-                # After installing, we should not exit, but let the script continue.
-                # However, for the first run, it's better to ask the user to restart.
                 print("Please restart the script to use the newly installed dependencies.")
-                sys.exit(0) # Exit to force a restart
+                sys.exit(0)
             else:
                 print("Please install the missing dependencies manually to run the script.")
+                sys.exit(1)
         except Exception as e:
             print(f"An error occurred during installation: {e}")
             print("Please try installing the dependencies manually.")
-        
-        sys.exit(1)
+            sys.exit(1)
 
 # Run the check before importing the modules
 check_dependencies()
@@ -128,45 +126,43 @@ def crawl_site(base_url, max_depth, headers):
 
     print("Starting crawl to map the site...")
     
-    progress_bar = tqdm(desc="Crawling Pages", unit="page", position=0, leave=True) # Added position for better display with nested tqdm
+    with tqdm(desc="Crawling Pages", unit="page") as progress_bar:
+        while to_visit:
+            current_url, depth = to_visit.pop(0)
 
-    while to_visit:
-        current_url, depth = to_visit.pop(0)
-
-        if current_url in visited or depth > max_depth:
-            continue
-
-        progress_bar.set_description(f"Crawling (Depth {depth}): {current_url[-50:]}")
-        visited.add(current_url)
-
-        try:
-            response = requests.get(current_url, headers=headers, timeout=10)
-            response.raise_for_status()
-        except requests.exceptions.RequestException:
-            continue
-
-        soup = BeautifulSoup(response.text, 'html.parser')
-
-        for img in soup.find_all('img'):
-            img_url = img.get('data-src') or img.get('data-lazyload') or img.get('src')
-            if not img_url or img_url.startswith('data:'):
+            if current_url in visited or depth > max_depth:
                 continue
-            
-            absolute_img_url = urljoin(current_url, img_url)
-            all_image_urls.add(absolute_img_url)
 
-        if depth < max_depth:
-            for link in soup.find_all('a', href=True):
-                absolute_link_url = urljoin(current_url, link['href'])
+            progress_bar.set_description(f"Crawling (Depth {depth}): {current_url[-50:]}")
+            visited.add(current_url)
+
+            try:
+                response = requests.get(current_url, headers=headers, timeout=10)
+                response.raise_for_status()
+            except requests.exceptions.RequestException:
+                continue
+
+            soup = BeautifulSoup(response.text, 'html.parser')
+
+            for img in soup.find_all('img'):
+                img_url = img.get('data-src') or img.get('data-lazyload') or img.get('src')
+                if not img_url or img_url.startswith('data:'):
+                    continue
                 
-                if urlparse(absolute_link_url).netloc == domain_name and '#' not in absolute_link_url:
-                    if absolute_link_url not in visited:
-                        to_visit.append((absolute_link_url, depth + 1))
-        
-        progress_bar.update(1)
-        time.sleep(0.5)
+                absolute_img_url = urljoin(current_url, img_url)
+                all_image_urls.add(absolute_img_url)
 
-    progress_bar.close()
+            if depth < max_depth:
+                for link in soup.find_all('a', href=True):
+                    absolute_link_url = urljoin(current_url, link['href'])
+                    
+                    if urlparse(absolute_link_url).netloc == domain_name and '#' not in absolute_link_url:
+                        if absolute_link_url not in visited:
+                            to_visit.append((absolute_link_url, depth + 1))
+            
+            progress_bar.update(1)
+            time.sleep(0.5)
+
     print(f"\nCrawl finished. Found {len(visited)} pages and {len(all_image_urls)} unique image URLs.")
     return visited, all_image_urls
 
@@ -176,24 +172,39 @@ def main():
     """
     parser = argparse.ArgumentParser(description="A simple web crawler to scrape images from a website.")
     parser.add_argument("url", nargs='?', help="The base URL of the website to scrape.")
-    parser.add_argument("-o", "--output", default="scrapes", help="The directory to save the scraped images. Defaults to 'scrapes'.")
+    parser.add_argument("-o", "--output", help="The directory to save the scraped images.")
     parser.add_argument("-d", "--depth", type=int, default=2, help="The maximum depth to crawl. Defaults to 2.")
     args = parser.parse_args()
 
+    # --- Interactive Prompts ---
     base_url = args.url
     if not base_url:
-        base_url = input("Please enter the website URL you want to crawl and scrape: ")
-        if not base_url.startswith("http://") and not base_url.startswith("https://"):
-            base_url = "https://" + base_url # Prepend https:// if not present
-        print(f"Using URL: {base_url}")
-
+        while not base_url:
+            base_url = input("Please enter the website URL you want to crawl: ")
+            if not base_url:
+                print("URL cannot be empty.")
+    
+    if not base_url.startswith("http"):
+        base_url = "https://" + base_url
+    print(f"Using URL: {base_url}")
 
     output_directory = args.output
+    if not output_directory:
+        while not output_directory:
+            output_directory = input("Please enter the directory to save the images (e.g., 'scrapes'): ")
+            if not output_directory:
+                print("Output directory cannot be empty.")
+    print(f"Saving images to: {output_directory}")
+    
     max_depth = args.depth
 
     if not os.path.exists(output_directory):
-        os.makedirs(output_directory)
-        print(f"Created directory: {output_directory}")
+        try:
+            os.makedirs(output_directory)
+            print(f"Created directory: {output_directory}")
+        except OSError as e:
+            print(f"Error creating directory {output_directory}: {e}")
+            sys.exit(1)
     else:
         print(f"Output directory '{output_directory}' already exists.")
 
@@ -206,11 +217,12 @@ def main():
     print("\nStarting image downloads...")
     
     download_count = 0
-    for img_url in tqdm(list(all_image_urls), desc="Downloading Images", unit="file", position=0, leave=True):
-        if download_image(img_url, output_directory, headers):
-            download_count += 1
+    with tqdm(list(all_image_urls), desc="Downloading Images", unit="file") as image_progress:
+        for img_url in image_progress:
+            if download_image(img_url, output_directory, headers):
+                download_count += 1
     
-    print(f"\nDownload process complete. Successfully downloaded or found {download_count} images.")
+    print(f"\nDownload process complete. Successfully downloaded or found {download_count} images in '{output_directory}'.")
 
 
 if __name__ == "__main__":
